@@ -212,16 +212,20 @@ def get_avg(games, key, exclude_idx=None, n=5):
     return sum(g[key] for g in recent) / len(recent)
 
 def delta_label(val, avg, lower_is_better=False, suffix=''):
-    """Return delta string and direction for st.metric."""
+    """Return (delta_string, delta_color) for st.metric."""
     if avg is None:
-        return None, None
-    diff = val - avg
+        return None, "off"
+    raw_diff = val - avg
+    if abs(raw_diff) < 0.05:
+        return f"avg {round(avg,1)}{suffix}", "off"
+    sign = "+" if raw_diff > 0 else ""
+    label = f"{sign}{round(raw_diff, 1)}{suffix} vs 5-game avg"
+    # For lower_is_better metrics, green = went down, red = went up
     if lower_is_better:
-        diff = -diff
-    if abs(diff) < 0.05:
-        return f"avg {round(avg,1)}{suffix}", None
-    sign = "+" if diff > 0 else ""
-    return f"{sign}{round(val - avg, 1)}{suffix} vs 5-game avg", "normal" if diff > 0 else "inverse"
+        color = "inverse"
+    else:
+        color = "normal"
+    return label, color
 
 
 # ── PAGE 1: TEAM OVERVIEW ─────────────────────────────────────────────────────
