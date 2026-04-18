@@ -219,7 +219,7 @@ def delta_label(val, avg, lower_is_better=False, suffix=''):
     if abs(raw_diff) < 0.05:
         return f"avg {round(avg,1)}{suffix}", "off"
     sign = "+" if raw_diff > 0 else ""
-    label = f"{sign}{round(raw_diff, 1)}{suffix} vs 5-game avg"
+    label = f"{sign}{round(raw_diff, 1)}{suffix}"
     # For lower_is_better metrics, green = went down, red = went up
     if lower_is_better:
         color = "inverse"
