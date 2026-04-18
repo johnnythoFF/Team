@@ -203,49 +203,97 @@ except:
 game_labels = [f"{g['opposition']} ({g['date'] or g['game']})" for g in games_list]
 
 
+def get_avg(games, key, exclude_idx=None, n=5):
+    """Get average of last n games excluding the selected game."""
+    others = [g for i, g in enumerate(games) if i != exclude_idx]
+    recent = others[-n:] if len(others) >= n else others
+    if not recent:
+        return None
+    return sum(g[key] for g in recent) / len(recent)
+
+def delta_label(val, avg, lower_is_better=False, suffix=''):
+    """Return delta string and direction for st.metric."""
+    if avg is None:
+        return None, None
+    diff = val - avg
+    if lower_is_better:
+        diff = -diff
+    if abs(diff) < 0.05:
+        return f"avg {round(avg,1)}{suffix}", None
+    sign = "+" if diff > 0 else ""
+    return f"{sign}{round(val - avg, 1)}{suffix} vs 5-game avg", "normal" if diff > 0 else "inverse"
+
+
 # ── PAGE 1: TEAM OVERVIEW ─────────────────────────────────────────────────────
 if page == "Team Overview":
 
     if len(games_list) > 1:
         selected_label = st.selectbox("Select game", game_labels)
-        g = games_list[game_labels.index(selected_label)]
+        g_idx = game_labels.index(selected_label)
+        g = games_list[g_idx]
     else:
         g = games_list[0]
+        g_idx = 0
+
+    has_history = len(games_list) > 1
+
+    def mdelta(key, lower_is_better=False, suffix=''):
+        if not has_history:
+            return None, None
+        avg = get_avg(games_list, key, exclude_idx=g_idx)
+        return delta_label(g[key], avg, lower_is_better=lower_is_better, suffix=suffix)
 
     st.markdown(f"## vs {g['opposition']}  <span style='font-size:14px;color:grey;font-weight:normal;'>{g['date'] or ''}</span>", unsafe_allow_html=True)
+
+    if has_history:
+        st.caption("↑↓ vs last 5-game average (excluding this game)")
+
     st.markdown("---")
 
     st.markdown("### Attacking")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Possession %", f"{g['home_poss_pct']}%")
+    d, dt = mdelta('home_poss_pct', suffix='%')
+    c1.metric("Possession %", f"{g['home_poss_pct']}%", delta=d, delta_color=dt or "off")
     c2.metric("Possessions", g['home_poss_count'], f"avg {g['home_avg_duration']}s")
-    c3.metric("Shots", g['total_shots'], f"{g['total_sot']} on target")
-    c4.metric("Shot on target %", f"{g['shot_on_target_pct']}%")
-    c5.metric("Goals", g['home_goals'])
+    d, dt = mdelta('total_shots')
+    c3.metric("Shots", g['total_shots'], delta=d, delta_color=dt or "off")
+    d, dt = mdelta('shot_on_target_pct', suffix='%')
+    c4.metric("Shot on target %", f"{g['shot_on_target_pct']}%", delta=d, delta_color=dt or "off")
+    d, dt = mdelta('home_goals')
+    c5.metric("Goals", g['home_goals'], delta=d, delta_color=dt or "off")
     c6.metric("Set pieces (att)", g['home_sp_count'])
 
     st.markdown("---")
     st.markdown("### Chance creation")
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Pen area entries", g['total_pen'])
-    c2.metric("Pen entry → shot %", f"{g['pen_to_shot_pct']}%",
+    d, dt = mdelta('total_pen')
+    c1.metric("Pen area entries", g['total_pen'], delta=d, delta_color=dt or "off")
+    d, dt = mdelta('pen_to_shot_pct', suffix='%')
+    c2.metric("Pen entry → shot %", f"{g['pen_to_shot_pct']}%", delta=d, delta_color=dt or "off",
               help=f"{g['pen_with_shot']} of {g['total_pen']} pen entries resulted in a shot")
-    c3.metric("Seam 2 entries", g['total_seam2'])
-    c4.metric("Seam 3 entries", g['total_seam3'])
-    c5.metric("Att transitions", g['transitions'])
+    d, dt = mdelta('total_seam2')
+    c3.metric("Seam 2 entries", g['total_seam2'], delta=d, delta_color=dt or "off")
+    d, dt = mdelta('total_seam3')
+    c4.metric("Seam 3 entries", g['total_seam3'], delta=d, delta_color=dt or "off")
+    d, dt = mdelta('transitions')
+    c5.metric("Att transitions", g['transitions'], delta=d, delta_color=dt or "off")
 
     st.markdown("---")
     st.markdown("### Crosses")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total crosses", g['total_crosses'])
+    d, dt = mdelta('total_crosses')
+    c1.metric("Total crosses", g['total_crosses'], delta=d, delta_color=dt or "off")
     c2.metric("Successful", g['total_cross_success'])
-    c3.metric("Success rate", f"{g['cross_pct']}%")
+    d, dt = mdelta('cross_pct', suffix='%')
+    c3.metric("Success rate", f"{g['cross_pct']}%", delta=d, delta_color=dt or "off")
 
     st.markdown("---")
     st.markdown("### Defensive")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Shots conceded", g['shots_conceded'])
-    c2.metric("SOT conceded", g['sot_conceded'])
+    d, dt = mdelta('shots_conceded', lower_is_better=True)
+    c1.metric("Shots conceded", g['shots_conceded'], delta=d, delta_color=dt or "off")
+    d, dt = mdelta('sot_conceded', lower_is_better=True)
+    c2.metric("SOT conceded", g['sot_conceded'], delta=d, delta_color=dt or "off")
     c3.metric("Set pieces (def)", g['away_sp_count'])
 
     st.markdown("---")
