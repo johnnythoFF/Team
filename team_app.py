@@ -155,14 +155,47 @@ if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.title("⚽ NZ FF Team Dashboard")
-    pwd = st.text_input("Enter password", type="password")
-    if st.button("Login"):
-        if pwd == st.secrets.get("APP_PASSWORD", "footballferns"):
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Incorrect password")
+    st.markdown("""
+    <style>
+    body, .stApp { background-color: #0d0f14 !important; }
+    .block-container { padding-top: 0 !important; max-width: 100% !important; }
+    section[data-testid="stSidebar"] { display: none; }
+    div[data-testid="stTextInput"] input {
+        background: rgba(255,255,255,0.05) !important;
+        border: 1px solid rgba(0,212,255,0.4) !important;
+        border-radius: 4px !important; color: white !important;
+        font-size: 16px !important; padding: 12px 16px !important;
+    }
+    div[data-testid="stTextInput"] input::placeholder { color: rgba(255,255,255,0.3) !important; }
+    div[data-testid="stTextInput"] label { color: rgba(255,255,255,0.5) !important; font-size: 11px !important; letter-spacing: 0.1em !important; }
+    div[data-testid="stButton"] button {
+        background: #00d4ff !important; color: #0d0f14 !important;
+        font-weight: 700 !important; font-size: 13px !important;
+        letter-spacing: 0.1em !important; text-transform: uppercase !important;
+        border: none !important; border-radius: 4px !important;
+        padding: 12px 32px !important; width: 100% !important; margin-top: 8px !important;
+    }
+    div[data-testid="stButton"] button:hover { background: #00b8d9 !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div style="background:#0d0f14;padding:56px 48px 32px 48px;">
+        <div style="font-family:Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.25em;color:#00d4ff;text-transform:uppercase;border-bottom:1px solid rgba(0,212,255,0.5);padding-bottom:10px;margin-bottom:20px;">Team Dashboard</div>
+        <div style="font-family:Arial Black,Impact,sans-serif;font-size:88px;font-weight:900;color:white;line-height:0.85;text-transform:uppercase;letter-spacing:-3px;margin-bottom:24px;text-shadow:0 0 60px rgba(0,212,255,0.08);">Football<br>Ferns</div>
+        <div style="font-family:Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.25em;color:#00d4ff;text-transform:uppercase;border-top:1px solid rgba(0,212,255,0.5);padding-top:10px;text-align:right;">OFC Qualifiers — Analytics</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        pwd = st.text_input("PASSWORD", type="password", placeholder="Enter password")
+        if st.button("Enter"):
+            if pwd == st.secrets.get("APP_PASSWORD", "footballferns"):
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect password")
     st.stop()
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
