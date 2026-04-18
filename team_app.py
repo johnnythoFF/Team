@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from collections import defaultdict
 import os
 import glob
 
@@ -24,29 +23,27 @@ st.markdown("""
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
 def col_contains(series, keyword):
-    """Rows where cell contains keyword."""
-    return series.dropna().str.contains(keyword, case=False, na=False)
+    return series.fillna('').str.contains(keyword, case=False, na=False)
 
 def count_rows(series, keyword):
-    """Count rows containing keyword."""
     return col_contains(series, keyword).sum()
 
 def count_instances(series, keyword):
-    """Count total keyword occurrences across all cells (handles comma-separated multiples)."""
     total = 0
-    for val in series.dropna():
+    for val in series.fillna(''):
         total += str(val).upper().count(keyword.upper())
     return total
 
 
-# ── PARSE & AGGREGATE ─────────────────────────────────────────────────────────
+# ── PARSE ─────────────────────────────────────────────────────────────────────
 
 def parse_game(df, game_name):
 
-    home    = df[df['Row'] == 'HOME POSSESSION'].copy()
-    away    = df[df['Row'] == 'AWAY POSSESSION'].copy()
-    home_sp = df[df['Row'] == 'HOME SET PIECE'].copy()
-    away_sp = df[df['Row'] == 'AWAY SET PIECE'].copy()
+    # Reset index on all subsets to avoid boolean indexer mismatch
+    home    = df[df['Row'] == 'HOME POSSESSION'].copy().reset_index(drop=True)
+    away    = df[df['Row'] == 'AWAY POSSESSION'].copy().reset_index(drop=True)
+    home_sp = df[df['Row'] == 'HOME SET PIECE'].copy().reset_index(drop=True)
+    away_sp = df[df['Row'] == 'AWAY SET PIECE'].copy().reset_index(drop=True)
 
     shoot  = 'SHOOTING'
     cross  = 'CROSSING'
@@ -54,6 +51,9 @@ def parse_game(df, game_name):
     pen    = 'PEN AREA ENTRY'
     thirds = 'POSSESSION THIRDS'
     trans  = 'TRANSITION'
+
+    def has_col(frame, col):
+        return col in frame.columns and len(frame) > 0
 
     # ── POSSESSION ────────────────────────────────────────────────────────────
     home_poss_count   = len(home)
@@ -65,72 +65,71 @@ def parse_game(df, game_name):
     home_avg_duration = round(home_poss_dur / home_poss_count, 1) if home_poss_count else 0
 
     # ── SHOTS (NZ attacking) ──────────────────────────────────────────────────
-    # Use count_instances so "ON TARGET, SHOT, SHOT" = 2 shots not 1
-    home_shots    = count_instances(home[shoot], 'SHOT')      if shoot in home.columns else 0
-    home_sot      = count_instances(home[shoot], 'ON TARGET') if shoot in home.columns else 0
-    home_goals    = count_instances(home[shoot], 'GOAL')      if shoot in home.columns else 0
-    sp_shots      = count_instances(home_sp[shoot], 'SHOT')      if (shoot in home_sp.columns and len(home_sp)) else 0
-    sp_sot        = count_instances(home_sp[shoot], 'ON TARGET') if (shoot in home_sp.columns and len(home_sp)) else 0
-    total_shots   = home_shots + sp_shots
-    total_sot     = home_sot + sp_sot
+    home_shots  = count_instances(home[shoot], 'SHOT')      if has_col(home, shoot) else 0
+    home_sot    = count_instances(home[shoot], 'ON TARGET') if has_col(home, shoot) else 0
+    home_goals  = count_instances(home[shoot], 'GOAL')      if has_col(home, shoot) else 0
+    sp_shots    = count_instances(home_sp[shoot], 'SHOT')      if has_col(home_sp, shoot) else 0
+    sp_sot      = count_instances(home_sp[shoot], 'ON TARGET') if has_col(home_sp, shoot) else 0
+    total_shots = home_shots + sp_shots
+    total_sot   = home_sot + sp_sot
 
     # ── SHOTS CONCEDED ────────────────────────────────────────────────────────
-    away_shots      = count_instances(away[shoot], 'SHOT')      if (shoot in away.columns and len(away)) else 0
-    away_sot        = count_instances(away[shoot], 'ON TARGET') if (shoot in away.columns and len(away)) else 0
-    away_sp_shots   = count_instances(away_sp[shoot], 'SHOT')   if (shoot in away_sp.columns and len(away_sp)) else 0
-    away_sp_sot     = count_instances(away_sp[shoot], 'ON TARGET') if (shoot in away_sp.columns and len(away_sp)) else 0
-    shots_conceded  = away_shots + away_sp_shots
-    sot_conceded    = away_sot + away_sp_sot
+    away_shots    = count_instances(away[shoot], 'SHOT')         if has_col(away, shoot) else 0
+    away_sot      = count_instances(away[shoot], 'ON TARGET')    if has_col(away, shoot) else 0
+    away_sp_shots = count_instances(away_sp[shoot], 'SHOT')      if has_col(away_sp, shoot) else 0
+    away_sp_sot   = count_instances(away_sp[shoot], 'ON TARGET') if has_col(away_sp, shoot) else 0
+    shots_conceded = away_shots + away_sp_shots
+    sot_conceded   = away_sot + away_sp_sot
 
     # ── CROSSES ───────────────────────────────────────────────────────────────
-    home_cross_ok   = count_rows(home[cross], 'Cross Successful')   if cross in home.columns else 0
-    home_cross_fail = count_rows(home[cross], 'Cross Unsuccessful') if cross in home.columns else 0
-    sp_cross_ok     = count_rows(home_sp[cross], 'Cross Successful')   if (cross in home_sp.columns and len(home_sp)) else 0
-    sp_cross_fail   = count_rows(home_sp[cross], 'Cross Unsuccessful') if (cross in home_sp.columns and len(home_sp)) else 0
-    total_crosses         = home_cross_ok + home_cross_fail + sp_cross_ok + sp_cross_fail
-    total_cross_success   = home_cross_ok + sp_cross_ok
-    cross_pct             = round(total_cross_success / total_crosses * 100, 1) if total_crosses else 0
+    home_cross_ok   = count_rows(home[cross], 'Cross Successful')      if has_col(home, cross) else 0
+    home_cross_fail = count_rows(home[cross], 'Cross Unsuccessful')    if has_col(home, cross) else 0
+    sp_cross_ok     = count_rows(home_sp[cross], 'Cross Successful')   if has_col(home_sp, cross) else 0
+    sp_cross_fail   = count_rows(home_sp[cross], 'Cross Unsuccessful') if has_col(home_sp, cross) else 0
+    total_crosses       = home_cross_ok + home_cross_fail + sp_cross_ok + sp_cross_fail
+    total_cross_success = home_cross_ok + sp_cross_ok
+    cross_pct           = round(total_cross_success / total_crosses * 100, 1) if total_crosses else 0
 
     # ── SEAM ENTRIES ──────────────────────────────────────────────────────────
-    seam2    = count_rows(home[ung], 'SEAM 2 ENTRY')     if ung in home.columns else 0
-    seam3    = count_rows(home[ung], 'SEAM THREE ENTRY') if ung in home.columns else 0
-    sp_seam2 = count_rows(home_sp[ung], 'SEAM 2 ENTRY')     if (ung in home_sp.columns and len(home_sp)) else 0
-    sp_seam3 = count_rows(home_sp[ung], 'SEAM THREE ENTRY') if (ung in home_sp.columns and len(home_sp)) else 0
+    seam2    = count_rows(home[ung], 'SEAM 2 ENTRY')        if has_col(home, ung) else 0
+    seam3    = count_rows(home[ung], 'SEAM THREE ENTRY')    if has_col(home, ung) else 0
+    sp_seam2 = count_rows(home_sp[ung], 'SEAM 2 ENTRY')     if has_col(home_sp, ung) else 0
+    sp_seam3 = count_rows(home_sp[ung], 'SEAM THREE ENTRY') if has_col(home_sp, ung) else 0
     total_seam2 = seam2 + sp_seam2
     total_seam3 = seam3 + sp_seam3
 
     # ── PEN AREA ENTRIES ──────────────────────────────────────────────────────
-    home_pen_rows = count_rows(home[pen], 'PEN AREA ENTRY') if pen in home.columns else 0
-    sp_pen_rows   = count_rows(home_sp[pen], 'PEN AREA ENTRY') if (pen in home_sp.columns and len(home_sp)) else 0
+    home_pen_rows = count_rows(home[pen], 'PEN AREA ENTRY')    if has_col(home, pen) else 0
+    sp_pen_rows   = count_rows(home_sp[pen], 'PEN AREA ENTRY') if has_col(home_sp, pen) else 0
     total_pen     = home_pen_rows + sp_pen_rows
 
     # ── PEN ENTRY → SHOT % (rows with BOTH pen entry AND a shot) ─────────────
-    if pen in home.columns and shoot in home.columns:
-        home_pen_with_shot = len(home[
+    if has_col(home, pen) and has_col(home, shoot):
+        home_pen_with_shot = int((
             col_contains(home[pen], 'PEN AREA ENTRY') &
             col_contains(home[shoot], 'SHOT')
-        ])
+        ).sum())
     else:
         home_pen_with_shot = 0
 
-    if pen in home_sp.columns and shoot in home_sp.columns and len(home_sp):
-        sp_pen_with_shot = len(home_sp[
+    if has_col(home_sp, pen) and has_col(home_sp, shoot):
+        sp_pen_with_shot = int((
             col_contains(home_sp[pen], 'PEN AREA ENTRY') &
             col_contains(home_sp[shoot], 'SHOT')
-        ])
+        ).sum())
     else:
         sp_pen_with_shot = 0
 
-    pen_with_shot    = home_pen_with_shot + sp_pen_with_shot
-    pen_to_shot_pct  = round(pen_with_shot / total_pen * 100, 1) if total_pen else 0
+    pen_with_shot   = home_pen_with_shot + sp_pen_with_shot
+    pen_to_shot_pct = round(pen_with_shot / total_pen * 100, 1) if total_pen else 0
 
     # ── POSSESSION THIRDS ─────────────────────────────────────────────────────
-    d3 = count_rows(home[thirds], 'P-D3') if thirds in home.columns else 0
-    m3 = count_rows(home[thirds], 'P-M3') if thirds in home.columns else 0
-    f3 = count_rows(home[thirds], 'P-F3') if thirds in home.columns else 0
+    d3 = count_rows(home[thirds], 'P-D3') if has_col(home, thirds) else 0
+    m3 = count_rows(home[thirds], 'P-M3') if has_col(home, thirds) else 0
+    f3 = count_rows(home[thirds], 'P-F3') if has_col(home, thirds) else 0
 
     # ── TRANSITIONS ───────────────────────────────────────────────────────────
-    transitions = count_rows(home[trans], 'ATTACKING TRANSITION') if trans in home.columns else 0
+    transitions = count_rows(home[trans], 'ATTACKING TRANSITION') if has_col(home, trans) else 0
 
     # ── SET PIECES ────────────────────────────────────────────────────────────
     home_sp_count = len(home_sp)
@@ -274,7 +273,6 @@ if page == "Team Overview":
     c3.metric("Set pieces (def)", g['away_sp_count'])
 
     st.markdown("---")
-
     col1, col2 = st.columns(2)
 
     with col1:
