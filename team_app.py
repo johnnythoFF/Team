@@ -150,6 +150,21 @@ if repo_csvs:
         except Exception as e:
             st.warning(f"Could not load {game_name}: {e}")
 
+# ── PASSWORD GATE ─────────────────────────────────────────────────────────────
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("⚽ NZ FF Team Dashboard")
+    pwd = st.text_input("Enter password", type="password")
+    if st.button("Login"):
+        if pwd == st.secrets.get("APP_PASSWORD", "footballferns"):
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect password")
+    st.stop()
+
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## ⚽ NZ FF Team Dashboard")
