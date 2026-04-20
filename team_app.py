@@ -60,7 +60,8 @@ NAVY="#0f3460"; NAVY2="#1a1a2e"; RED="#e63946"; GRID="#f0f0f0"
 GRAY="#718096"; WHITE="#ffffff"; GREEN="#2d6a4f"; AMBER="#e07b00"
 
 def load_all():
-    files = glob.glob("*.csv")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    files = glob.glob(os.path.join(script_dir, "data", "*.csv"))
     dfs = []
     for f in files:
         try:
