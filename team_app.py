@@ -1,460 +1,487 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import os
 import glob
+import os
+from collections import Counter
 
-st.set_page_config(
-    page_title="NZ FF — Team Dashboard",
-    page_icon="⚽",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Football Ferns — Tactical Analysis", layout="wide")
+
+st.markdown('<link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-    .block-container { padding-top: 1.5rem; }
-    h1 { font-size: 1.6rem !important; }
-    h2 { font-size: 1.2rem !important; }
+  html, body, [class*="css"], .stApp, button, input, select, textarea {
+    font-family: 'Nunito Sans', sans-serif !important;
+  }
+  .stApp { background:#f5f6f7; }
+  section[data-testid="stSidebar"] { background:#ffffff; border-right:2px solid #e8e8e8; }
+  .page-header {
+    background:linear-gradient(135deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%);
+    padding:24px 32px 20px; border-radius:12px; margin-bottom:20px;
+  }
+  .page-header h1 { color:#ffffff; font-size:24px; font-weight:800; margin:0; }
+  .page-header p  { color:#a0aec0; font-size:13px; margin:4px 0 0; }
+  .header-badge {
+    background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2);
+    border-radius:20px; padding:4px 12px; font-size:12px; color:#e2e8f0;
+    display:inline-block; margin-top:8px;
+  }
+  .metric-card {
+    background:#ffffff; border:1px solid #e8e8e8; border-radius:10px;
+    padding:16px 14px; text-align:center; border-top:3px solid #0f3460;
+    box-shadow:0 1px 4px rgba(0,0,0,0.06);
+  }
+  .metric-card.green { border-top-color:#2d6a4f; }
+  .metric-card.red   { border-top-color:#e63946; }
+  .metric-card.amber { border-top-color:#e07b00; }
+  .metric-label { font-size:10px; color:#718096; text-transform:uppercase;
+    letter-spacing:1.2px; margin-bottom:6px; font-weight:600; }
+  .metric-value { font-size:26px; font-weight:800; color:#1a1a2e; line-height:1; }
+  .metric-value.green { color:#2d6a4f; }
+  .metric-value.red   { color:#e63946; }
+  .metric-value.amber { color:#e07b00; }
+  .metric-sub   { font-size:11px; color:#a0aec0; margin-top:4px; }
+  .section-title {
+    font-size:15px; font-weight:700; color:#1a1a2e; text-transform:uppercase;
+    letter-spacing:1px; border-bottom:2px solid #0f3460; padding-bottom:6px;
+    margin:24px 0 14px;
+  }
+  .chart-wrap {
+    background:#ffffff; border:1px solid #e8e8e8; border-radius:10px;
+    padding:4px; box-shadow:0 1px 4px rgba(0,0,0,0.05); margin-bottom:8px;
+  }
+  .sidebar-header { font-size:13px; font-weight:700; color:#1a1a2e;
+    text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
 </style>
 """, unsafe_allow_html=True)
 
+NAVY="#0f3460"; NAVY2="#1a1a2e"; RED="#e63946"; GRID="#f0f0f0"
+GRAY="#718096"; WHITE="#ffffff"; GREEN="#2d6a4f"; AMBER="#e07b00"
 
-# ── HELPERS ───────────────────────────────────────────────────────────────────
-
-def col_contains(series, keyword):
-    return series.fillna('').str.contains(keyword, case=False, na=False)
-
-def count_rows(series, keyword):
-    return col_contains(series, keyword).sum()
-
-def count_instances(series, keyword):
-    total = 0
-    for val in series.fillna(''):
-        total += str(val).upper().count(keyword.upper())
-    return total
-
-def has_col(frame, col):
-    return col in frame.columns and len(frame) > 0
-
-
-# ── PARSE ─────────────────────────────────────────────────────────────────────
-
-def parse_game(df, game_name):
-
-    home    = df[df['Row'] == 'HOME POSSESSION'].copy().reset_index(drop=True)
-    away    = df[df['Row'] == 'AWAY POSSESSION'].copy().reset_index(drop=True)
-    home_sp = df[df['Row'] == 'HOME SET PIECE'].copy().reset_index(drop=True)
-    away_sp = df[df['Row'] == 'AWAY SET PIECE'].copy().reset_index(drop=True)
-
-    shoot  = 'SHOOTING'
-    cross  = 'CROSSING'
-    ung    = 'Ungrouped'
-    pen    = 'PEN AREA ENTRY'
-    thirds = 'POSSESSION THIRDS'
-    trans  = 'TRANSITION'
-
-    home_poss_count   = len(home)
-    away_poss_count   = len(away)
-    home_poss_dur     = home['Duration'].sum() if 'Duration' in home.columns else 0
-    away_poss_dur     = away['Duration'].sum() if 'Duration' in away.columns else 0
-    total_dur         = home_poss_dur + away_poss_dur
-    home_poss_pct     = round(home_poss_dur / total_dur * 100, 1) if total_dur else 0
-    home_avg_duration = round(home_poss_dur / home_poss_count, 1) if home_poss_count else 0
-
-    home_shots  = count_instances(home[shoot], 'SHOT')      if has_col(home, shoot) else 0
-    home_sot    = count_instances(home[shoot], 'ON TARGET') if has_col(home, shoot) else 0
-    home_goals  = count_instances(home[shoot], 'GOAL')      if has_col(home, shoot) else 0
-    sp_shots    = count_instances(home_sp[shoot], 'SHOT')      if has_col(home_sp, shoot) else 0
-    sp_sot      = count_instances(home_sp[shoot], 'ON TARGET') if has_col(home_sp, shoot) else 0
-    total_shots = home_shots + sp_shots
-    total_sot   = home_sot + sp_sot
-
-    away_shots    = count_instances(away[shoot], 'SHOT')         if has_col(away, shoot) else 0
-    away_sot      = count_instances(away[shoot], 'ON TARGET')    if has_col(away, shoot) else 0
-    away_sp_shots = count_instances(away_sp[shoot], 'SHOT')      if has_col(away_sp, shoot) else 0
-    away_sp_sot   = count_instances(away_sp[shoot], 'ON TARGET') if has_col(away_sp, shoot) else 0
-    shots_conceded = away_shots + away_sp_shots
-    sot_conceded   = away_sot + away_sp_sot
-
-    home_cross_ok   = count_rows(home[cross], 'Cross Successful')      if has_col(home, cross) else 0
-    home_cross_fail = count_rows(home[cross], 'Cross Unsuccessful')    if has_col(home, cross) else 0
-    sp_cross_ok     = count_rows(home_sp[cross], 'Cross Successful')   if has_col(home_sp, cross) else 0
-    sp_cross_fail   = count_rows(home_sp[cross], 'Cross Unsuccessful') if has_col(home_sp, cross) else 0
-    total_crosses       = home_cross_ok + home_cross_fail + sp_cross_ok + sp_cross_fail
-    total_cross_success = home_cross_ok + sp_cross_ok
-    cross_pct           = round(total_cross_success / total_crosses * 100, 1) if total_crosses else 0
-
-    seam2    = count_rows(home[ung], 'SEAM 2 ENTRY')        if has_col(home, ung) else 0
-    seam3    = count_rows(home[ung], 'SEAM THREE ENTRY')    if has_col(home, ung) else 0
-    sp_seam2 = count_rows(home_sp[ung], 'SEAM 2 ENTRY')     if has_col(home_sp, ung) else 0
-    sp_seam3 = count_rows(home_sp[ung], 'SEAM THREE ENTRY') if has_col(home_sp, ung) else 0
-    total_seam2 = seam2 + sp_seam2
-    total_seam3 = seam3 + sp_seam3
-
-    home_pen_rows = count_rows(home[pen], 'PEN AREA ENTRY')    if has_col(home, pen) else 0
-    sp_pen_rows   = count_rows(home_sp[pen], 'PEN AREA ENTRY') if has_col(home_sp, pen) else 0
-    total_pen     = home_pen_rows + sp_pen_rows
-
-    if has_col(home, pen) and has_col(home, shoot):
-        home_pen_with_shot = int((col_contains(home[pen], 'PEN AREA ENTRY') & col_contains(home[shoot], 'SHOT')).sum())
-    else:
-        home_pen_with_shot = 0
-
-    if has_col(home_sp, pen) and has_col(home_sp, shoot):
-        sp_pen_with_shot = int((col_contains(home_sp[pen], 'PEN AREA ENTRY') & col_contains(home_sp[shoot], 'SHOT')).sum())
-    else:
-        sp_pen_with_shot = 0
-
-    pen_with_shot   = home_pen_with_shot + sp_pen_with_shot
-    pen_to_shot_pct = round(pen_with_shot / total_pen * 100, 1) if total_pen else 0
-
-    d3 = count_rows(home[thirds], 'P-D3') if has_col(home, thirds) else 0
-    m3 = count_rows(home[thirds], 'P-M3') if has_col(home, thirds) else 0
-    f3 = count_rows(home[thirds], 'P-F3') if has_col(home, thirds) else 0
-
-    transitions   = count_rows(home[trans], 'ATTACKING TRANSITION') if has_col(home, trans) else 0
-    home_sp_count = len(home_sp)
-    away_sp_count = len(away_sp)
-    shot_on_target_pct = round(total_sot / total_shots * 100, 1) if total_shots else 0
-
-    date       = df['Date'].dropna().iloc[0]       if ('Date' in df.columns and len(df['Date'].dropna())) else None
-    opposition = df['Opposition'].dropna().iloc[0] if ('Opposition' in df.columns and len(df['Opposition'].dropna())) else game_name
-
-    return {
-        'game': game_name, 'date': date, 'opposition': opposition,
-        'home_poss_count': home_poss_count, 'away_poss_count': away_poss_count,
-        'home_poss_pct': home_poss_pct, 'home_avg_duration': home_avg_duration,
-        'total_shots': total_shots, 'total_sot': total_sot, 'home_goals': home_goals,
-        'shots_conceded': shots_conceded, 'sot_conceded': sot_conceded,
-        'total_crosses': total_crosses, 'total_cross_success': total_cross_success, 'cross_pct': cross_pct,
-        'total_seam2': total_seam2, 'total_seam3': total_seam3,
-        'total_pen': total_pen, 'pen_with_shot': pen_with_shot, 'pen_to_shot_pct': pen_to_shot_pct,
-        'shot_on_target_pct': shot_on_target_pct,
-        'home_sp_count': home_sp_count, 'away_sp_count': away_sp_count,
-        'transitions': transitions, 'd3_count': d3, 'm3_count': m3, 'f3_count': f3,
-    }
-
-
-# ── LOAD DATA ─────────────────────────────────────────────────────────────────
-all_game_stats = {}
-data_folder = "data"
-repo_csvs = sorted(glob.glob(os.path.join(data_folder, "*.csv")))
-
-if repo_csvs:
-    for path in repo_csvs:
-        game_name = os.path.basename(path).replace('.csv', '')
+def load_all():
+    files = glob.glob("*.csv")
+    dfs = []
+    for f in files:
         try:
-            df = pd.read_csv(path, sep=None, engine='python')
-            all_game_stats[game_name] = parse_game(df, game_name)
-        except Exception as e:
-            st.warning(f"Could not load {game_name}: {e}")
+            df = pd.read_csv(f)
+            if 'Row' in df.columns and 'POSSESSION THIRDS' in df.columns:
+                name = os.path.splitext(f)[0].replace("_", " ")
+                df['Match'] = name
+                dfs.append(df)
+        except:
+            pass
+    if not dfs:
+        return pd.DataFrame()
+    combined = pd.concat(dfs, ignore_index=True)
+    if 'Date' in combined.columns:
+        combined['Date_parsed'] = pd.to_datetime(combined['Date'], dayfirst=True, errors='coerce')
+    return combined
 
-# ── PASSWORD GATE ─────────────────────────────────────────────────────────────
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
+def parse_multi(series):
+    vals = []
+    for v in series.dropna():
+        for p in str(v).split(','):
+            vals.append(p.strip())
+    return Counter(vals)
 
-if not st.session_state.authenticated:
-    st.title("⚽ NZ FF Team Dashboard")
-    pwd = st.text_input("Enter password", type="password")
-    if st.button("Login"):
-        if pwd == st.secrets.get("APP_PASSWORD", "footballferns"):
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Incorrect password")
+def shots_from(df):
+    v = parse_multi(df['SHOOTING'])
+    return v.get('SHOT', 0), v.get('ON TARGET', 0), v.get('GOAL', 0)
+
+def pct(n, d, fmt=True):
+    if d == 0: return "0%" if fmt else 0
+    val = round(n / d * 100)
+    return f"{val}%" if fmt else val
+
+raw = load_all()
+
+if raw.empty:
+    st.error("No CSV files found. Add your Sportscode team CSV files to the same folder as this app.")
     st.stop()
 
-# ── SIDEBAR ───────────────────────────────────────────────────────────────────
+if 'Date_parsed' in raw.columns:
+    match_dates = raw.dropna(subset=['Date_parsed']).groupby('Match')['Date_parsed'].min().sort_values()
+    matches = list(match_dates.index)
+else:
+    matches = sorted(raw['Match'].dropna().unique())
+
 with st.sidebar:
-    st.markdown("## ⚽ NZ FF Team Dashboard")
-    st.markdown("---")
+    st.markdown('<div class="sidebar-header">Football Ferns</div>', unsafe_allow_html=True)
+    st.markdown("<small style='color:#718096;'>Tactical Analysis</small>", unsafe_allow_html=True)
+    if st.button("Refresh Data"):
+        st.rerun()
+    st.divider()
+    st.markdown('<div class="sidebar-header">Filter</div>', unsafe_allow_html=True)
+    sel_matches = st.multiselect("Match", matches, default=[], placeholder="All matches")
+    st.divider()
+    st.markdown('<div class="sidebar-header">Matches loaded</div>', unsafe_allow_html=True)
+    for m in matches:
+        opp = raw[raw['Match']==m]['Opposition'].dropna()
+        date = raw[raw['Match']==m]['Date'].dropna()
+        o = opp.iloc[0] if not opp.empty else ""
+        d = date.iloc[0] if not date.empty else ""
+        st.markdown(f"<small style='color:#4a5568;'><b>vs {o}</b> · {d}</small>", unsafe_allow_html=True)
 
-    if repo_csvs:
-        st.success(f"{len(repo_csvs)} game(s) loaded")
-        for path in repo_csvs:
-            st.markdown(f"- `{os.path.basename(path)}`")
-        st.markdown("---")
+df_v = raw.copy()
+if sel_matches:
+    df_v = df_v[df_v['Match'].isin(sel_matches)]
 
-    uploaded = st.file_uploader("Upload additional CSVs", type="csv", accept_multiple_files=True)
-    if uploaded:
-        for f in uploaded:
-            game_name = f.name.replace('.csv', '')
-            try:
-                df = pd.read_csv(f, sep=None, engine='python')
-                all_game_stats[game_name] = parse_game(df, game_name)
-            except Exception as e:
-                st.warning(f"Could not load {game_name}: {e}")
+home    = df_v[df_v['Row'] == 'HOME POSSESSION'].copy()
+away    = df_v[df_v['Row'] == 'AWAY POSSESSION'].copy()
+home_sp = df_v[df_v['Row'] == 'HOME SET PIECE'].copy()
 
-    st.markdown("---")
-    page = st.radio("Page", ["Team Overview", "Trends Over Time"])
+s2 = home[home['Ungrouped'].str.contains('SEAM 2 ENTRY', na=False)]
+s3 = home[home['Ungrouped'].str.contains('SEAM THREE ENTRY', na=False)]
 
-if not all_game_stats:
-    st.title("⚽ NZ FF Team Dashboard")
-    st.info("Add match CSVs to the `data/` folder in GitHub or upload via the sidebar.")
-    st.stop()
+match_label = ', '.join(sel_matches) if sel_matches else f"All {len(matches)} matches"
+st.markdown(f"""
+<div class="page-header">
+  <h1>Football Ferns — Tactical Analysis</h1>
+  <p>Sportscode possession data · seam entry & sequence analysis</p>
+  <span class="header-badge">{match_label}</span>
+</div>
+""", unsafe_allow_html=True)
 
-games_list = list(all_game_stats.values())
-try:
-    games_list = sorted(games_list, key=lambda x: pd.to_datetime(x['date'], dayfirst=True) if x['date'] else pd.Timestamp.min)
-except:
-    pass
+_cc = [0]
+def wrap(fig):
+    _cc[0] += 1
+    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=f"tc_{_cc[0]}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-game_labels = [f"{g['opposition']} ({g['date'] or g['game']})" for g in games_list]
+def kpi(col, label, value, sub="", color=""):
+    col.markdown(f'<div class="metric-card {color}"><div class="metric-label">{label}</div><div class="metric-value {color}">{value}</div><div class="metric-sub">{sub}</div></div>', unsafe_allow_html=True)
 
-
-def get_avg(games, key, exclude_idx=None, n=5):
-    """Get average of last n games excluding the selected game."""
-    others = [g for i, g in enumerate(games) if i != exclude_idx]
-    recent = others[-n:] if len(others) >= n else others
-    if not recent:
-        return None
-    return sum(g[key] for g in recent) / len(recent)
-
-def delta_label(val, avg, lower_is_better=False, suffix=''):
-    """Return (delta_string, delta_color) for st.metric."""
-    if avg is None:
-        return None, "off"
-    raw_diff = val - avg
-    if abs(raw_diff) < 0.05:
-        return f"avg {round(avg,1)}{suffix}", "off"
-    sign = "+" if raw_diff > 0 else ""
-    label = f"{sign}{round(raw_diff, 1)}{suffix}"
-    # For lower_is_better metrics, green = went down, red = went up
-    if lower_is_better:
-        color = "inverse"
-    else:
-        color = "normal"
-    return label, color
-
-
-# ── PAGE 1: TEAM OVERVIEW ─────────────────────────────────────────────────────
-if page == "Team Overview":
-
-    if len(games_list) > 1:
-        selected_label = st.selectbox("Select game", game_labels)
-        g_idx = game_labels.index(selected_label)
-        g = games_list[g_idx]
-    else:
-        g = games_list[0]
-        g_idx = 0
-
-    has_history = len(games_list) > 1
-
-    def mdelta(key, lower_is_better=False, suffix=''):
-        if not has_history:
-            return None, None
-        avg = get_avg(games_list, key, exclude_idx=g_idx)
-        return delta_label(g[key], avg, lower_is_better=lower_is_better, suffix=suffix)
-
-    st.markdown(f"## vs {g['opposition']}  <span style='font-size:14px;color:grey;font-weight:normal;'>{g['date'] or ''}</span>", unsafe_allow_html=True)
-
-    if has_history:
-        st.caption("↑↓ vs last 5-game average (excluding this game)")
-
-    st.markdown("---")
-
-    st.markdown("### Attacking")
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    d, dt = mdelta('home_poss_pct', suffix='%')
-    c1.metric("Possession %", f"{g['home_poss_pct']}%", delta=d, delta_color=dt or "off")
-    c2.metric("Possessions", g['home_poss_count'], f"avg {g['home_avg_duration']}s")
-    d, dt = mdelta('total_shots')
-    c3.metric("Shots", g['total_shots'], delta=d, delta_color=dt or "off")
-    d, dt = mdelta('shot_on_target_pct', suffix='%')
-    c4.metric("Shot on target %", f"{g['shot_on_target_pct']}%", delta=d, delta_color=dt or "off")
-    d, dt = mdelta('home_goals')
-    c5.metric("Goals", g['home_goals'], delta=d, delta_color=dt or "off")
-    c6.metric("Set pieces (att)", g['home_sp_count'])
-
-    st.markdown("---")
-    st.markdown("### Chance creation")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    d, dt = mdelta('total_pen')
-    c1.metric("Pen area entries", g['total_pen'], delta=d, delta_color=dt or "off")
-    d, dt = mdelta('pen_to_shot_pct', suffix='%')
-    c2.metric("Pen entry → shot %", f"{g['pen_to_shot_pct']}%", delta=d, delta_color=dt or "off",
-              help=f"{g['pen_with_shot']} of {g['total_pen']} pen entries resulted in a shot")
-    d, dt = mdelta('total_seam2')
-    c3.metric("Seam 2 entries", g['total_seam2'], delta=d, delta_color=dt or "off")
-    d, dt = mdelta('total_seam3')
-    c4.metric("Seam 3 entries", g['total_seam3'], delta=d, delta_color=dt or "off")
-    d, dt = mdelta('transitions')
-    c5.metric("Att transitions", g['transitions'], delta=d, delta_color=dt or "off")
-
-    st.markdown("---")
-    st.markdown("### Crosses")
-    c1, c2, c3 = st.columns(3)
-    d, dt = mdelta('total_crosses')
-    c1.metric("Total crosses", g['total_crosses'], delta=d, delta_color=dt or "off")
-    c2.metric("Successful", g['total_cross_success'])
-    d, dt = mdelta('cross_pct', suffix='%')
-    c3.metric("Success rate", f"{g['cross_pct']}%", delta=d, delta_color=dt or "off")
-
-    st.markdown("---")
-    st.markdown("### Defensive")
-    c1, c2, c3 = st.columns(3)
-    d, dt = mdelta('shots_conceded', lower_is_better=True)
-    c1.metric("Shots conceded", g['shots_conceded'], delta=d, delta_color=dt or "off")
-    d, dt = mdelta('sot_conceded', lower_is_better=True)
-    c2.metric("SOT conceded", g['sot_conceded'], delta=d, delta_color=dt or "off")
-    c3.metric("Set pieces (def)", g['away_sp_count'])
-
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("**Possession thirds (NZ)**")
-        thirds_total = g['d3_count'] + g['m3_count'] + g['f3_count']
-        if thirds_total > 0:
-            fig = go.Figure(go.Bar(
-                x=['Def third', 'Mid third', 'Final third'],
-                y=[g['d3_count'], g['m3_count'], g['f3_count']],
-                marker_color=['#4d9fff', '#00C87A', '#ffb74d'],
-                text=[g['d3_count'], g['m3_count'], g['f3_count']],
-                textposition='auto',
-            ))
-            fig.update_layout(
-                height=280, margin=dict(t=10,b=10,l=10,r=10),
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                yaxis=dict(gridcolor='rgba(0,0,0,0.05)'),
-                showlegend=False,
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No possession thirds data")
-
-    with col2:
-        st.markdown("**Possession split**")
-        fig2 = go.Figure(go.Pie(
-            labels=['NZ', 'Opposition'],
-            values=[g['home_poss_pct'], round(100 - g['home_poss_pct'], 1)],
-            hole=0.55,
-            marker_colors=['#00C87A', '#ff5252'],
-            textinfo='label+percent',
-        ))
-        fig2.update_layout(
-            height=280, margin=dict(t=10,b=10,l=10,r=10),
-            paper_bgcolor='rgba(0,0,0,0)',
-            showlegend=False,
-        )
-        st.plotly_chart(fig2, use_container_width=True)
-
-    st.markdown("**Attacking funnel**")
-    funnel_fig = go.Figure(go.Funnel(
-        y=['Pen area entries', 'Pen entries with shot', 'Shots on target', 'Goals'],
-        x=[g['total_pen'], g['pen_with_shot'], g['total_sot'], g['home_goals']],
-        marker_color=['#4d9fff', '#00C87A', '#ffb74d', '#ff5252'],
-        textposition='inside',
-        textinfo='value+percent initial',
-    ))
-    funnel_fig.update_layout(
-        height=300, margin=dict(t=10,b=10,l=10,r=10),
-        paper_bgcolor='rgba(0,0,0,0)',
+def lay(fig, title, h=300, show_legend=True):
+    fig.update_layout(
+        title=dict(text=f"<b>{title}</b>", font=dict(color=NAVY2, size=13, family="Nunito Sans, sans-serif"), x=0),
+        paper_bgcolor=WHITE, plot_bgcolor=WHITE, font=dict(color=GRAY, family="Nunito Sans, sans-serif"),
+        margin=dict(t=50, b=10, l=10, r=10), height=h,
+        xaxis=dict(gridcolor=GRID, linecolor="#e8e8e8", tickfont=dict(size=10, color=GRAY)),
+        yaxis=dict(gridcolor=GRID, linecolor="#e8e8e8", tickfont=dict(size=10, color=GRAY)),
+        legend=dict(font=dict(size=10, color=GRAY), orientation="h", y=1.12, x=1, xanchor="right") if show_legend else dict(visible=False),
+        bargap=0.3,
     )
-    st.plotly_chart(funnel_fig, use_container_width=True)
+    return fig
 
+def donut(labels, values, title, colors, h=290):
+    fig = go.Figure(go.Pie(
+        labels=labels, values=values, hole=0.55,
+        marker=dict(colors=colors, line=dict(color=WHITE, width=2)),
+        textfont=dict(size=11, family="Nunito Sans, sans-serif"),
+        hovertemplate="%{label}: %{value} (%{percent})<extra></extra>"
+    ))
+    fig.update_layout(
+        title=dict(text=f"<b>{title}</b>", font=dict(color=NAVY2, size=13, family="Nunito Sans, sans-serif"), x=0),
+        paper_bgcolor=WHITE, font=dict(color=GRAY, family="Nunito Sans, sans-serif"),
+        legend=dict(font=dict(size=10, color=GRAY), orientation="h", y=-0.08, x=0.5, xanchor="center"),
+        margin=dict(t=50, b=40, l=10, r=10), height=h,
+    )
+    return fig
 
-# ── PAGE 2: TRENDS OVER TIME ──────────────────────────────────────────────────
-elif page == "Trends Over Time":
-
-    if len(games_list) < 2:
-        st.info("Add more games to the `data/` folder to see trends. At least 2 games needed.")
-
-    short_labels = [g['opposition'] for g in games_list]
-
-    def trend_chart(title, y_values, labels, color='#00C87A', suffix='', show_avg=True):
-        fig = go.Figure()
+def line_chart(x, metrics, title, h=300):
+    colors = [NAVY, RED, GREEN, AMBER, "#7c3aed"]
+    fig = go.Figure()
+    for i, (label, y) in enumerate(metrics):
         fig.add_trace(go.Scatter(
-            x=labels, y=y_values,
-            mode='lines+markers+text',
-            line=dict(color=color, width=2.5),
-            marker=dict(size=8, color=color),
-            text=[f"{v}{suffix}" for v in y_values],
-            textposition='top center',
-            textfont=dict(size=11),
-            name=title,
+            x=x, y=y, mode="lines+markers", name=label,
+            line=dict(color=colors[i % len(colors)], width=2.5),
+            marker=dict(size=7, color=colors[i % len(colors)], line=dict(color=WHITE, width=1.5)),
         ))
-        if show_avg and len(y_values) > 1:
-            avg = round(sum(y_values) / len(y_values), 1)
-            fig.add_hline(y=avg, line_dash='dot', line_color='rgba(128,128,128,0.5)',
-                         annotation_text=f"avg {avg}{suffix}", annotation_position='right')
-        fig.update_layout(
-            height=220, margin=dict(t=10,b=10,l=10,r=10),
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            yaxis=dict(gridcolor='rgba(0,0,0,0.05)', zeroline=False),
-            xaxis=dict(gridcolor='rgba(0,0,0,0.05)'),
-            showlegend=False,
-        )
-        return fig
+    return lay(fig, title, h)
 
-    st.markdown("## Trends over time")
-    st.markdown("---")
-
-    st.markdown("### Shooting")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Shot on target %**")
-        st.plotly_chart(trend_chart('SOT %', [g['shot_on_target_pct'] for g in games_list], short_labels, '#00C87A', '%'), use_container_width=True)
-    with col2:
-        st.markdown("**Total shots**")
-        st.plotly_chart(trend_chart('Shots', [g['total_shots'] for g in games_list], short_labels, '#ffb74d'), use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("### Chance creation")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Penalty box entries**")
-        st.plotly_chart(trend_chart('Pen entries', [g['total_pen'] for g in games_list], short_labels, '#4d9fff'), use_container_width=True)
-    with col2:
-        st.markdown("**Pen entry → shot %**  *(entries that led to a shot)*")
-        st.plotly_chart(trend_chart('Pen→Shot %', [g['pen_to_shot_pct'] for g in games_list], short_labels, '#00C87A', '%'), use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("### Entries")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Seam 2 entries**")
-        st.plotly_chart(trend_chart('Seam 2', [g['total_seam2'] for g in games_list], short_labels, '#4d9fff'), use_container_width=True)
-    with col2:
-        st.markdown("**Seam 3 entries**")
-        st.plotly_chart(trend_chart('Seam 3', [g['total_seam3'] for g in games_list], short_labels, '#ffb74d'), use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("### Crosses")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Cross success rate %**")
-        st.plotly_chart(trend_chart('Cross %', [g['cross_pct'] for g in games_list], short_labels, '#00C87A', '%'), use_container_width=True)
-    with col2:
-        st.markdown("**Total crosses**")
-        st.plotly_chart(trend_chart('Crosses', [g['total_crosses'] for g in games_list], short_labels, '#4d9fff'), use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("### Defensive")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Shots conceded**")
-        st.plotly_chart(trend_chart('Shots conceded', [g['shots_conceded'] for g in games_list], short_labels, '#ff5252'), use_container_width=True)
-    with col2:
-        st.markdown("**SOT conceded**")
-        st.plotly_chart(trend_chart('SOT conceded', [g['sot_conceded'] for g in games_list], short_labels, '#ff5252'), use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("### Summary table")
-    summary_rows = []
-    for g in games_list:
-        summary_rows.append({
-            'Opposition': g['opposition'],
-            'Date': g['date'] or '',
-            'Poss %': f"{g['home_poss_pct']}%",
-            'Shots': g['total_shots'],
-            'SOT %': f"{g['shot_on_target_pct']}%",
-            'Pen entries': g['total_pen'],
-            'Pen→Shot %': f"{g['pen_to_shot_pct']}%",
-            'Seam 2': g['total_seam2'],
-            'Seam 3': g['total_seam3'],
-            'Cross %': f"{g['cross_pct']}%",
-            'Shots conceded': g['shots_conceded'],
+def match_stats_all():
+    rows = []
+    for m in matches:
+        mdf   = raw[raw['Match'] == m]
+        mhome = mdf[mdf['Row'] == 'HOME POSSESSION']
+        maway = mdf[mdf['Row'] == 'AWAY POSSESSION']
+        msp   = mdf[mdf['Row'] == 'HOME SET PIECE']
+        ms2   = mhome[mhome['Ungrouped'].str.contains('SEAM 2 ENTRY', na=False)]
+        ms3   = mhome[mhome['Ungrouped'].str.contains('SEAM THREE ENTRY', na=False)]
+        sh, ot, g   = shots_from(mhome)
+        sh3, ot3, g3 = shots_from(ms3)
+        cr = parse_multi(mhome['CROSSING'])
+        opp  = mdf['Opposition'].dropna().iloc[0] if not mdf['Opposition'].dropna().empty else m
+        at   = parse_multi(maway['POSSESSION THIRDS'])
+        rows.append({
+            'Match': m, 'Label': f"vs {opp}",
+            'Poss': len(mhome), 'S2': len(ms2), 'S3': len(ms3),
+            'Shots': sh, 'OnTarget': ot, 'Goals': g,
+            'S3_Shots': sh3, 'S3_OT': ot3, 'S3_Goals': g3,
+            'PenEntry': mhome['PEN AREA ENTRY'].notna().sum(),
+            'CrossSucc': cr.get('Cross Successful', 0),
+            'CrossFail': cr.get('Cross Unsuccessful', 0),
+            'Trans': parse_multi(mhome['TRANSITION']).get('ATTACKING TRANSITION', 0),
+            'SP_Shots': shots_from(msp)[0],
+            'Away_D3': at.get('P-D3', 0), 'Away_M3': at.get('P-M3', 0), 'Away_F3': at.get('P-F3', 0),
+            'Away_Shots': shots_from(maway)[0],
         })
-    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
+    return pd.DataFrame(rows)
+
+trend_df = match_stats_all()
+tlabels  = list(trend_df['Label'])
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "Seam 2", "Seam 3", "Possession", "Set Pieces", "Opposition", "Trends"
+])
+
+with tab1:
+    shots2, ot2, g2 = shots_from(s2)
+    pen2 = s2['PEN AREA ENTRY'].notna().sum()
+    cr2  = parse_multi(s2['CROSSING'])
+    cs2  = cr2.get('Cross Successful', 0)
+    ct2  = cs2 + cr2.get('Cross Unsuccessful', 0)
+    t2   = parse_multi(s2['POSSESSION THIRDS'])
+
+    st.markdown('<div class="section-title">Seam 2 — key metrics</div>', unsafe_allow_html=True)
+    c1,c2,c3,c4,c5 = st.columns(5)
+    kpi(c1, "Seam 2 entries", len(s2), "sequences")
+    kpi(c2, "Shots", shots2, f"{pct(shots2,len(s2))} of entries")
+    kpi(c3, "On target", ot2, f"{pct(ot2,shots2)} of shots", "green")
+    kpi(c4, "Pen area entries", pen2, f"{pct(pen2,len(s2))} of entries", "amber")
+    kpi(c5, "Cross success", f"{cs2}/{ct2}", f"{pct(cs2,ct2)}" if ct2 else "n/a")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        wrap(donut(["Defensive 3rd","Middle 3rd","Final 3rd"],
+            [t2.get('P-D3',0), t2.get('P-M3',0), t2.get('P-F3',0)],
+            "Possession thirds in seam 2 sequences", [RED, AMBER, GREEN]))
+    with c2:
+        hs2 = s2['SHOOTING'].notna().sum()
+        hp2 = s2['PEN AREA ENTRY'].notna().sum()
+        hc2 = s2['CROSSING'].notna().sum()
+        no2 = len(s2) - s2[['SHOOTING','PEN AREA ENTRY','CROSSING']].notna().any(axis=1).sum()
+        wrap(donut(["Shot","Pen area entry","Cross","No outcome"],
+            [hs2, hp2, hc2, max(0,no2)],
+            "What happened after seam 2 entry", [NAVY, GREEN, AMBER, GRAY]))
+
+with tab2:
+    shots3, ot3, g3 = shots_from(s3)
+    pen3 = s3['PEN AREA ENTRY'].notna().sum()
+    t3   = parse_multi(s3['POSSESSION THIRDS'])
+
+    st.markdown('<div class="section-title">Seam 3 — key metrics</div>', unsafe_allow_html=True)
+    c1,c2,c3,c4,c5 = st.columns(5)
+    kpi(c1, "Seam 3 entries", len(s3), "sequences")
+    kpi(c2, "Shots", shots3, f"{pct(shots3,len(s3))} of entries")
+    kpi(c3, "On target", ot3, f"{pct(ot3,shots3)} of shots", "green")
+    kpi(c4, "Goals", g3, "from seam 3", "green" if g3>0 else "")
+    kpi(c5, "Pen area entries", pen3, f"{pct(pen3,len(s3))} of entries", "amber")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        wrap(donut(["Defensive 3rd","Middle 3rd","Final 3rd"],
+            [t3.get('P-D3',0), t3.get('P-M3',0), t3.get('P-F3',0)],
+            "Possession thirds in seam 3 sequences", [RED, AMBER, GREEN]))
+    with c2:
+        hs3 = s3['SHOOTING'].notna().sum()
+        hp3 = s3['PEN AREA ENTRY'].notna().sum()
+        no3 = len(s3) - s3[['SHOOTING','PEN AREA ENTRY','CROSSING']].notna().any(axis=1).sum()
+        wrap(donut(["Shot","Pen area entry","No outcome"],
+            [hs3, hp3, max(0,no3)],
+            "What happened after seam 3 entry", [NAVY, GREEN, GRAY]))
+
+    st.markdown('<div class="section-title">Seam 2 vs Seam 3</div>', unsafe_allow_html=True)
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name="Seam 2", x=["Entries","Shots","On Target","Pen Entry"],
+            y=[len(s2),shots2,ot2,pen2], marker_color=NAVY, marker_line_width=0))
+        fig.add_trace(go.Bar(name="Seam 3", x=["Entries","Shots","On Target","Pen Entry"],
+            y=[len(s3),shots3,ot3,pen3], marker_color=RED, marker_line_width=0))
+        fig.update_layout(barmode="group")
+        wrap(lay(fig, "Seam 2 vs Seam 3 — counts"))
+    with c2:
+        wrap(donut(["Shot","No shot"],[shots2,max(0,len(s2)-shots2)],"Seam 2 — shot rate",[NAVY,GRID]))
+    with c3:
+        wrap(donut(["Shot","No shot"],[shots3,max(0,len(s3)-shots3)],"Seam 3 — shot rate",[RED,GRID]))
+
+with tab3:
+    all_sh, all_ot, all_g = shots_from(home)
+    all_pen    = home['PEN AREA ENTRY'].notna().sum()
+    all_cr     = parse_multi(home['CROSSING'])
+    all_cs     = all_cr.get('Cross Successful', 0)
+    all_ct     = all_cs + all_cr.get('Cross Unsuccessful', 0)
+    all_trans  = parse_multi(home['TRANSITION']).get('ATTACKING TRANSITION', 0)
+    all_thirds = parse_multi(home['POSSESSION THIRDS'])
+    fp = parse_multi(home['FIRST PHASE'])
+    sp = parse_multi(home['SECOND PHASE'])
+
+    st.markdown('<div class="section-title">Overall possession — key metrics</div>', unsafe_allow_html=True)
+    c1,c2,c3,c4,c5,c6 = st.columns(6)
+    kpi(c1, "Possessions", len(home), "sequences")
+    kpi(c2, "Shots", all_sh, f"{pct(all_sh,len(home))} of poss")
+    kpi(c3, "On target", all_ot, f"{pct(all_ot,all_sh)} of shots", "green")
+    kpi(c4, "Goals", all_g, "scored", "green" if all_g>0 else "")
+    kpi(c5, "Pen entries", all_pen, f"{pct(all_pen,len(home))} of poss", "amber")
+    kpi(c6, "Transitions", all_trans, "attacking")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        wrap(donut(["Defensive 3rd","Middle 3rd","Final 3rd"],
+            [all_thirds.get('P-D3',0), all_thirds.get('P-M3',0), all_thirds.get('P-F3',0)],
+            "Where NZ had possession", [RED, AMBER, GREEN]))
+    with c2:
+        s2c = home['Ungrouped'].str.contains('SEAM 2 ENTRY', na=False).sum()
+        s3c = home['Ungrouped'].str.contains('SEAM THREE ENTRY', na=False).sum()
+        wrap(donut(
+            ["Seam 2 entry","Seam 3 entry","Cross","Transition","Other"],
+            [s2c, s3c, all_ct, all_trans, max(0, len(home)-s2c-s3c-all_ct-all_trans)],
+            "Possession sequence types", [NAVY, RED, AMBER, GREEN, GRAY]))
+
+    if fp or sp:
+        st.markdown('<div class="section-title">Phase data</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            if fp:
+                fig = go.Figure(go.Bar(x=list(fp.keys()), y=list(fp.values()),
+                    marker_color=NAVY, marker_line_width=0,
+                    text=list(fp.values()), textposition="outside",
+                    textfont=dict(color=NAVY2, size=11)))
+                wrap(lay(fig, "First phase outcomes", show_legend=False))
+        with c2:
+            if sp:
+                fig = go.Figure(go.Bar(x=list(sp.keys()), y=list(sp.values()),
+                    marker_color=GREEN, marker_line_width=0,
+                    text=list(sp.values()), textposition="outside",
+                    textfont=dict(color=NAVY2, size=11)))
+                wrap(lay(fig, "Second phase outcomes", show_legend=False))
+
+with tab4:
+    sp_sh, sp_ot, sp_g = shots_from(home_sp)
+    sp_pen = home_sp['PEN AREA ENTRY'].notna().sum()
+
+    st.markdown('<div class="section-title">Set pieces — key metrics</div>', unsafe_allow_html=True)
+    c1,c2,c3,c4 = st.columns(4)
+    kpi(c1, "Set piece sequences", len(home_sp), "total")
+    kpi(c2, "Shots", sp_sh, f"{pct(sp_sh,len(home_sp))} of SP" if len(home_sp) else "")
+    kpi(c3, "On target", sp_ot, f"{pct(sp_ot,sp_sh)} of shots", "green")
+    kpi(c4, "Goals", sp_g, "from set pieces", "green" if sp_g>0 else "")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        sp_t = parse_multi(home_sp['POSSESSION THIRDS'])
+        wrap(donut(["Defensive 3rd","Middle 3rd","Final 3rd"],
+            [sp_t.get('P-D3',0), sp_t.get('P-M3',0), sp_t.get('P-F3',0)],
+            "Set piece possession zones", [RED, AMBER, GREEN]))
+    with c2:
+        sp_trans = parse_multi(home_sp['TRANSITION']).get('ATTACKING TRANSITION', 0)
+        sp_cr = parse_multi(home_sp['CROSSING'])
+        sp_ct = sp_cr.get('Cross Successful',0) + sp_cr.get('Cross Unsuccessful',0)
+        fig = go.Figure(go.Bar(
+            x=["Shots","On Target","Goals","Pen Entries","Crosses","Transitions"],
+            y=[sp_sh, sp_ot, sp_g, sp_pen, sp_ct, sp_trans],
+            marker_color=[NAVY, GREEN, GREEN, AMBER, NAVY, RED],
+            marker_line_width=0,
+            text=[sp_sh, sp_ot, sp_g, sp_pen, sp_ct, sp_trans],
+            textposition="outside", textfont=dict(color=NAVY2, size=11)
+        ))
+        wrap(lay(fig, "Set piece outcomes", show_legend=False))
+
+with tab5:
+    away_sh, away_ot, away_g = shots_from(away)
+    away_thirds = parse_multi(away['POSSESSION THIRDS'])
+    away_trans  = parse_multi(away['TRANSITION']).get('ATTACKING TRANSITION', 0)
+    away_fp     = parse_multi(away['FIRST PHASE'])
+    away_pen    = away['PEN AREA ENTRY'].notna().sum()
+
+    st.markdown('<div class="section-title">Opposition possession — key metrics</div>', unsafe_allow_html=True)
+    c1,c2,c3,c4,c5 = st.columns(5)
+    kpi(c1, "Opp possessions", len(away), "sequences")
+    kpi(c2, "Opp shots", away_sh, f"{pct(away_sh,len(away))} of poss")
+    kpi(c3, "Opp on target", away_ot, f"{pct(away_ot,away_sh)} of shots", "red")
+    kpi(c4, "Goals conceded", away_g, "conceded", "red" if away_g>0 else "green")
+    kpi(c5, "Opp transitions", away_trans, "attacking")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        wrap(donut(["Defensive 3rd","Middle 3rd","Final 3rd"],
+            [away_thirds.get('P-D3',0), away_thirds.get('P-M3',0), away_thirds.get('P-F3',0)],
+            "Where opposition had possession", [GREEN, AMBER, RED]))
+    with c2:
+        if away_fp:
+            fig = go.Figure(go.Bar(x=list(away_fp.keys()), y=list(away_fp.values()),
+                marker_color=RED, marker_line_width=0,
+                text=list(away_fp.values()), textposition="outside",
+                textfont=dict(color=NAVY2, size=11)))
+            wrap(lay(fig, "Opposition first phase outcomes", show_legend=False))
+        else:
+            wrap(donut(["NZ possession","Opp possession"],
+                [len(home), len(away)], "Possession share", [NAVY, RED]))
+
+    st.markdown('<div class="section-title">NZ vs Opposition</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name="NZ", x=["Possessions","Shots","On Target","Pen Entries"],
+            y=[len(home),all_sh,all_ot,all_pen], marker_color=NAVY, marker_line_width=0))
+        fig.add_trace(go.Bar(name="Opposition", x=["Possessions","Shots","On Target","Pen Entries"],
+            y=[len(away),away_sh,away_ot,away_pen], marker_color=RED, marker_line_width=0))
+        fig.update_layout(barmode="group")
+        wrap(lay(fig, "NZ vs Opposition — head to head"))
+    with c2:
+        wrap(donut(["NZ possession","Opp possession"],
+            [len(home), len(away)], "Possession share", [NAVY, RED]))
+
+with tab6:
+    if len(matches) < 2:
+        st.info("Add more match CSVs to the same folder and click Refresh Data to view trends across games.")
+    else:
+        st.markdown('<div class="section-title">Seam entry trends</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            wrap(line_chart(tlabels,
+                [("Seam 2 entries", trend_df['S2'].tolist()),
+                 ("Seam 3 entries", trend_df['S3'].tolist())],
+                "Seam entries per match"))
+        with c2:
+            s2p = [pct(r.S2, r.Poss, fmt=False) for r in trend_df.itertuples()]
+            s3p = [pct(r.S3, r.Poss, fmt=False) for r in trend_df.itertuples()]
+            wrap(line_chart(tlabels,
+                [("Seam 2 % of poss", s2p), ("Seam 3 % of poss", s3p)],
+                "Seam entries as % of possession"))
+
+        st.markdown('<div class="section-title">Attacking trends</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            wrap(line_chart(tlabels,
+                [("Shots", trend_df['Shots'].tolist()),
+                 ("On Target", trend_df['OnTarget'].tolist()),
+                 ("Goals", trend_df['Goals'].tolist())],
+                "Shots, on target & goals per match"))
+        with c2:
+            wrap(line_chart(tlabels,
+                [("Pen area entries", trend_df['PenEntry'].tolist()),
+                 ("Transitions", trend_df['Trans'].tolist())],
+                "Pen area entries & transitions"))
+
+        st.markdown('<div class="section-title">Crossing trends</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            wrap(line_chart(tlabels,
+                [("Successful", trend_df['CrossSucc'].tolist()),
+                 ("Unsuccessful", trend_df['CrossFail'].tolist())],
+                "Crossing per match"))
+        with c2:
+            cxp = [pct(r.CrossSucc, r.CrossSucc+r.CrossFail, fmt=False) for r in trend_df.itertuples()]
+            wrap(line_chart(tlabels, [("Cross accuracy %", cxp)], "Cross accuracy % per match"))
+
+        st.markdown('<div class="section-title">Opposition trends</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            wrap(line_chart(tlabels,
+                [("Opp final 3rd", trend_df['Away_F3'].tolist()),
+                 ("Opp shots", trend_df['Away_Shots'].tolist())],
+                "Opposition threat per match"))
+        with c2:
+            af3p = [pct(r.Away_F3, r.Away_D3+r.Away_M3+r.Away_F3, fmt=False) for r in trend_df.itertuples()]
+            wrap(line_chart(tlabels, [("Opp final 3rd %", af3p)], "Opposition final 3rd possession %"))
+
+st.markdown("<br><small style='color:#cbd5e0;'>Data: Sportscode · NZ Football Ferns</small>", unsafe_allow_html=True)
