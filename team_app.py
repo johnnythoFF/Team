@@ -92,15 +92,29 @@ def load_all():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     files = glob.glob(os.path.join(script_dir, "data", "*.csv"))
     dfs = []
+    skipped = []
     for f in files:
-        try:
-            df = pd.read_csv(f)
-            if 'Row' in df.columns and 'POSSESSION THIRDS' in df.columns:
-                name = os.path.splitext(os.path.basename(f))[0].replace("_", " ")
-                df['Match'] = name
-                dfs.append(df)
-        except:
-            pass
+        df = None
+        for enc in ['utf-8', 'utf-8-sig', 'latin1', 'cp1252']:
+            try:
+                df = pd.read_csv(f, encoding=enc)
+                break
+            except Exception:
+                continue
+        if df is None:
+            skipped.append((os.path.basename(f), "could not read file"))
+            continue
+        if 'Row' not in df.columns or 'POSSESSION THIRDS' not in df.columns:
+            skipped.append((os.path.basename(f), f"missing columns — has: {list(df.columns)[:6]}"))
+            continue
+        name = os.path.splitext(os.path.basename(f))[0].replace("_", " ")
+        df['Match'] = name
+        dfs.append(df)
+    if skipped:
+        st.sidebar.divider()
+        st.sidebar.markdown('<div class="sidebar-header">Skipped files</div>', unsafe_allow_html=True)
+        for fname, reason in skipped:
+            st.sidebar.markdown(f"<small style='color:#e63946;'>⚠ {fname}<br><span style='color:#718096;'>{reason}</span></small>", unsafe_allow_html=True)
     if not dfs:
         return pd.DataFrame()
     combined = pd.concat(dfs, ignore_index=True)
