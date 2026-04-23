@@ -244,7 +244,10 @@ def seam_game_card(df_home, seam_label, seam_str, bar_class):
     succ     = success_count(s)
     succ_pct = round(succ / total * 100)
     pen_only, cross_only, shot_only, pen_shot, pen_cross, cross_shot, all_three, none = detailed_success(s)
+    _, _, goals = shots_from(s)
     notes = []
+    if goals > 0:
+        notes.append(f"<strong style='color:#2d6a4f;'>{goals} goal{'s' if goals != 1 else ''}</strong>")
     if none > 0:
         notes.append(f"{none} possession{'s' if none != 1 else ''} with no follow-up action")
     if all_three > 0:
@@ -299,12 +302,13 @@ kpi(c6, "Cross success", f"{total_cs}/{total_ct}", f"{pct(total_cs, total_ct)}" 
 
 # ── SEAM 2 OVERALL ─────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Seam 2 — overall</div>', unsafe_allow_html=True)
-c1,c2,c3,c4,c5 = st.columns(5)
+c1,c2,c3,c4,c5,c6 = st.columns(6)
 kpi(c1, "Seam 2 entries", len(s2), "sequences")
 kpi(c2, "Shots", shots2, f"{pct(shots2, len(s2))} of entries")
 kpi(c3, "On target", ot2, f"{pct(ot2, shots2)} of shots", "green")
-kpi(c4, "Pen area entries", pen2, f"{pct(pen2, len(s2))} of entries", "amber")
-kpi(c5, "Cross success", f"{cs2}/{ct2}", f"{pct(cs2,ct2)}" if ct2 else "n/a")
+kpi(c4, "Goals", g2, f"{pct(g2, shots2)} of shots", "green" if g2 > 0 else "")
+kpi(c5, "Pen area entries", pen2, f"{pct(pen2, len(s2))} of entries", "amber")
+kpi(c6, "Cross success", f"{cs2}/{ct2}", f"{pct(cs2,ct2)}" if ct2 else "n/a")
 
 st.markdown("<br>", unsafe_allow_html=True)
 c1, c2 = st.columns(2)
@@ -318,9 +322,10 @@ with c2:
     hc2 = s2['CROSSING'].notna().sum()       if 'CROSSING'       in s2.columns else 0
     cols_check = [c for c in ['SHOOTING','PEN AREA ENTRY','CROSSING'] if c in s2.columns]
     no2 = len(s2) - s2[cols_check].notna().any(axis=1).sum() if cols_check else len(s2)
-    wrap(donut(["Shot","Pen area entry","Cross","No outcome"],
-        [hs2, hp2, hc2, max(0,no2)],
-        "What happened after seam 2 entry", [NAVY, GREEN, AMBER, GRAY]))
+    gs2 = parse_multi(s2['SHOOTING']).get('GOAL', 0) if 'SHOOTING' in s2.columns else 0
+    wrap(donut(["Goal","Shot","Pen area entry","Cross","No outcome"],
+        [gs2, max(0,hs2-gs2), hp2, hc2, max(0,no2)],
+        "What happened after seam 2 entry", [GREEN, NAVY, AMBER, "#378ADD", GRAY]))
 
 # ── SEAM 3 OVERALL ─────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Seam 3 — overall</div>', unsafe_allow_html=True)
@@ -369,10 +374,10 @@ with c1:
     wrap(lay(fig, "Success rate — Seam 2 vs Seam 3"))
 with c2:
     fig = go.Figure()
-    fig.add_trace(go.Bar(name="Seam 2", x=["Entries","Shots","On Target","Pen Entry"],
-        y=[len(s2),shots2,ot2,pen2], marker_color=NAVY, marker_line_width=0))
-    fig.add_trace(go.Bar(name="Seam 3", x=["Entries","Shots","On Target","Pen Entry"],
-        y=[len(s3),shots3,ot3,pen3], marker_color=RED, marker_line_width=0))
+    fig.add_trace(go.Bar(name="Seam 2", x=["Entries","Shots","On Target","Goals","Pen Entry"],
+        y=[len(s2),shots2,ot2,g2,pen2], marker_color=NAVY, marker_line_width=0))
+    fig.add_trace(go.Bar(name="Seam 3", x=["Entries","Shots","On Target","Goals","Pen Entry"],
+        y=[len(s3),shots3,ot3,g3,pen3], marker_color=RED, marker_line_width=0))
     fig.update_layout(barmode="group")
     wrap(lay(fig, "Seam 2 vs Seam 3 — counts"))
 with c3:
